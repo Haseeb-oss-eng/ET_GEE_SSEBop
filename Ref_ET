@@ -1,0 +1,110 @@
+var Boundaries = ee.FeatureCollection("USDOS/LSIB_SIMPLE/2017"),
+    LST = ee.ImageCollection("MODIS/061/MOD11A2"),
+    NDVI = ee.ImageCollection("MODIS/061/MOD13A2"),
+    ERA5 = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR"),
+    SRTM = ee.Image("CGIAR/SRTM90_V4"),
+    modET = ee.ImageCollection("MODIS/NTSG/MOD16A2/105"),
+    DekkalET = ee.ImageCollection("FAO/WAPOR/2/L1_RET_D");
+
+////////////////////////////////////////////////// Extract the value of Reference ET ///////////////////////////////////////////////
+var boundary = Boundaries.filter(ee.Filter.eq('country_co','CG'));
+var moi = boundary.geometry();
+
+var startDate = '2010-01-01';
+var endDate = '2010-05-30';
+
+var Daterange= ee.DateRange(startDate,endDate);
+
+var Projection = LST.select('LST_Day_1km').filterDate(Daterange).first().projection();
+var Scale = Projection.nominalScale();
+
+var dataset = modET.filterDate(Daterange).filterBounds(moi)
+              .select(['ET','PET']);
+
+var ET_Scale = dataset.map(function(img){
+  return img.select('ET').toFloat().multiply(0.1)
+        .copyProperties(img,['system:time_start']);
+});
+
+var dataset_ = ET_Scale.select('ET').filterDate(Daterange);
+var imageList = dataset_.toList(dataset_.size());
+print("Imagecollection",imageList.length().getInfo());
+// Loop through the list and print the system:time_start property
+for (var i = 0; i < imageList.length().getInfo(); i++) {
+  var image = ee.Image(imageList.get(i));
+  var startTime = ee.Date(image.get('system:time_start'));
+  var date = ee.Date(image.get('system:time_start')).format('YYYY-MM-dd');
+  var doy = startTime.getRelative('day','year'); 
+  print('Image', i, 'doy:', doy,'date:',date);
+
+
+var ET_af = ee.Number(image.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: moi,
+  scale: 1000
+}).get('ET'));
+
+// var PET_af = ee.Number(image.reduceRegion({
+//   reducer: ee.Reducer.mean(),
+//   geometry: aoi,
+//   scale: 1000
+// }).get('PET'));
+
+print('ET scale:',ET_af);//,'PET scale:',PET_af);
+
+
+var ET_bf = ee.Number(image.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: moi,
+  scale: 1000
+}).get('ET'));
+
+
+// var PET_bf = ee.Number(image.reduceRegion({
+//   reducer: ee.Reducer.mean(),
+//   geometry: aoi,
+//   scale: 1000
+// }).get('PET'));
+
+print('ET scale:',ET_bf);//,'PET scale:',PET_bf);
+}
+
+
+
+
+var refET = DekkalET.filterDate(Daterange).select('L1_RET_D');
+
+
+var refET_scale = refET.map(function(img){
+  return img.toFloat().multiply(0.1)
+         .copyProperties(img,['system:time_start']);
+});
+
+
+
+var reproject = refET_scale.select('L1_RET_D').map(function(img){return img.resample('bicubic').reproject({
+  crs: Projection,
+  scale:Scale,
+})});
+
+print(reproject.select('L1_RET_D').first().projection().nominalScale());
+
+var dataset_RET = reproject.select('L1_RET_D').filterDate(Daterange)
+
+var dataset = dataset_RET.toList(dataset_RET.size());
+print()
+for (var i = 0; i < dataset.length().getInfo(); i++) {
+  var image = ee.Image(dataset.get(i));
+  var startTime = ee.Date(image.get('system:time_start'));
+  var date = ee.Date(image.get('system:time_start')).format('YYYY-MM-dd');
+  var doy = startTime.getRelative('day','year'); 
+  print('Image', i, 'doy:', doy,'date:',date);
+
+var ETo = ee.Number(reproject.filterDate(Daterange).select('L1_RET_D').mean().reduceRegion({
+  reducer:ee.Reducer.mean(),
+  geometry: moi,
+  scale:1000
+}).get('L1_RET_D'));
+
+print(ETo);
+}
