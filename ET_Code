@@ -13,7 +13,7 @@ var Boundaries = ee.FeatureCollection("USDOS/LSIB_SIMPLE/2017"),
     ndvipara = {"opacity":1,"bands":["NDVI"],"min":-1,"max":1,"palette":["90ff7c","5a67ff"]},
     geometry = /* color: #98ff00 */ee.Geometry.Point([80.13162361914553, 19.096152203946563]);
 
-//----------------------------------------------------- Estimstion of ET on GEE using SSEBop Model ------------------------------------------------------------------------------
+//////////////////////////////////////////////////////////////// Estimstion of ET on GEE using SSEBop Model //////////////////////////////////////////////////////////////
 //Area of Interest
 var boundary = Boundaries.filter(ee.Filter.eq('country_co','CG'));
 var moi = boundary.geometry();//geometry;//table.geometry();
