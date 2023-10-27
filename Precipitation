@@ -1,0 +1,53 @@
+var Precipitation = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY"),
+    MODIS_ET = ee.ImageCollection("MODIS/NTSG/MOD16A2/105"),
+    Congo = ee.FeatureCollection("users/geoinformatics696/Congo");
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+var date = ee.DateRange('2001-01-01','2001-05-27');
+
+var MOD_ET = MODIS_ET.filterDate(date).filterBounds(Congo);
+
+var ET = MOD_ET.select('ET');
+
+var projection = ET.first().projection();
+var scale = projection.nominalScale();
+
+var precip = Precipitation.filterDate(date).filterBounds(Congo);
+
+var Preciptate = precip.select('precipitation');
+
+var scale_P = Preciptate.map(function(img){return img.resample('bicubic').reproject({
+  crs: projection,
+  scale:scale,
+})});
+var precipitation = scale_P.select('precipitation').filterDate(date);
+
+
+var join = ee.Join.simple();
+var filter = ee.Filter.equals({
+  leftField: 'system:time_start',
+  rightField:'system:time_end',
+});
+
+var joined = join.apply(precipitation,ET,filter);
+
+print("Joined",joined)
+var list = joined.toList(joined.size());
+print('size:',list.length());
+for (var i = 0; i < list.length().getInfo(); i++) {
+  var image = ee.Image(list.get(i));
+  var startdate = ee.Date(image.get('system:time_start'));
+  var date = startdate.format('YYYY-MM-dd');
+  var doy = startdate.getRelative('day', 'year');
+  print('date:', date, 'doy:', doy);
+
+  var p = ee.Number(image.reduceRegion({
+    reducer: ee.Reducer.mean(),
+    geometry: Congo,
+    scale: 1000,
+  }).get('precipitation'));
+
+  print('Precipitation:',p);
+ 
+  
+}
