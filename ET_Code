@@ -1,0 +1,490 @@
+//Aear of Interest
+var boundary = Boundaries.filter(ee.Filter.eq('country_co','CG'));
+var moi = boundary.geometry();//geometry;//table.geometry();
+Map.centerObject(boundary,5);
+Map.addLayer(table);
+//Date
+var start_Date = ee.Date('2001-01-01');
+var end_date = ee.Date('2002-12-31');
+var Daterange = ee.DateRange(start_Date,end_date);
+print(Daterange)
+
+var etList = [];
+//projection and Scale
+var Projection = LST.select('LST_Day_1km').first().projection();
+var Scale = Projection.nominalScale();
+print(Projection,Scale);
+
+//SRTM resample
+var srtm = SRTM.resample('bicubic').reproject({
+    crs:Projection,
+    scale:Scale,
+  });
+  
+//dem
+var DEM = ee.Number(srtm.reduceRegion({
+  reducer:ee.Reducer.mean(),
+  geometry:moi,
+  scale:1000,
+}).get('elevation'));
+
+
+//conversion scale
+var LST_Scale = LST.select('LST_Day_1km').map(function(img){
+  return img.toFloat().multiply(0.02)
+        .copyProperties(img,['system:time_start']);
+});
+
+var LSTc = LST_Scale.select('LST_Day_1km').map(function(img){
+  return img.select('LST_Day_1km').add(ee.Number(0.0065).multiply(DEM))
+        .copyProperties(img,['system:time_start']);
+});
+
+print('Lst corrected:',LSTc)
+// print(ee.ImageCollection(LSTc).select('LST_Day_1km').size());
+var NDVI_Scale = NDVI.select('NDVI').map(function(img){
+  return img.toFloat().multiply(0.0001)
+        .copyProperties(img,['system:time_start']);
+});
+
+
+//MODIS Surface 
+
+var ndvi_cal = MODIS_surf.map(function(img){
+  var nir = img.select('sur_refl_b02');
+  var red = img.select('sur_refl_b01');
+  var ndvi = nir.subtract(red).divide(nir.add(red));
+  return img.addBands(ndvi.rename('NDVI'));
+});
+print(ndvi_cal,'NDVI converted');
+
+var ndvi_reproject = ndvi_cal.map(function(img){
+                return img.select('NDVI').resample('bicubic')
+                .reproject({
+                  crs:Projection,
+                  scale:Scale,
+                });
+});
+
+print(ndvi_reproject.select('NDVI').first().projection().nominalScale(),'Reprojected NDVI Scale')
+
+
+
+
+Map.addLayer(ndvi_reproject.select('NDVI'),ndvipara,'NDVI_check')
+// //calculate mean
+// var NDVI_avg = function(img){
+//   var ndvi_mean = img.reduce(ee.Reducer.mean());
+//   return ndvi_mean;
+// };
+
+// var ndvI = NDVIrange.map(NDVI_avg)
+//           .filter(ee.Filter.calendarRange(8,8,'DAY_OF_YEAR'))
+//           .select('NDVI');
+           
+// print(ndvI)
+
+var combined = LSTc.combine(ndvi_reproject);
+print('Combined Data:',combined);
+//Load the climate Data
+var Air_Temp_mean = ERA5.select('mean_2m_air_temperature').map(function(img){
+  return img.resample('bicubic').reproject({
+    crs:Projection,
+    scale:Scale,
+  });
+});
+
+var Air_Temp_max = ERA5.select('maximum_2m_air_temperature').map(function(img){
+  return img.resample('bicubic').reproject({
+    crs:Projection,
+    scale:Scale,
+  });
+});
+
+var Air_Temp_min = ERA5.select('minimum_2m_air_temperature').map(function(img){
+  return img.resample('bicubic').reproject({
+    crs:Projection,
+    scale:Scale,
+  });
+});
+
+var dew_Temp_min = ERA_5.select('dewpoint_temperature_2m_min').map(function(img){
+  return img.resample('bicubic').reproject({
+    crs:Projection,
+    scale:Scale,
+  });
+});
+
+//print(Air_Temp_mean.first(),Air_Temp_max.first(),Air_Temp_min.first(),srtm);
+
+var cold_pixel = combined.map(function(img){
+  var ndvi = img.select('NDVI');
+  // Filter NDVI collection for the corresponding 16-day period
+  var threshold = ndvi.gt(ee.Number(0.8));
+  var lst = img.select('LST_Day_1km');
+  var ts_cold = lst.updateMask(threshold);
+  return ts_cold;
+});
+//print('cold',cold_pixel.select('LST_Day_1km').filterDate(Daterange))
+var ndv = ee.ImageCollection(cold_pixel).select('LST_Day_1km').mean();
+Map.addLayer(combined.select('NDVI'),{
+  min: -1,
+  max: 1,
+  palette: [
+    'ffffff', 'ce7e45', 'df923d', 'f1b555', 'fcd163', '99b718', '74a901',
+    '66a000', '529400', '3e8601', '207401', '056201', '004c00', '023b01',
+    '012e01', '011d01', '011301'
+  ],
+},'NDVI');
+Map.addLayer(ndv,{min:0,max:300,palette:['violet','blue']},'Ts_cold_Temp');
+
+var Ta = Air_Temp_max.select('maximum_2m_air_temperature').filterDate(Daterange).map(function(img){
+  return img.select('maximum_2m_air_temperature');
+});
+//print('Ta;',Ta.mean());
+
+var Ta_max =  ee.Number(Ta.select('maximum_2m_air_temperature').max().reduceRegion({
+  reducer: ee.Reducer.max(),
+  geometry: moi,
+  scale: 1000,
+}).get('maximum_2m_air_temperature'));
+
+//print(Ta_max);
+
+
+//print(Ta_max);
+var Ts_cold = ee.Number(cold_pixel.select('LST_Day_1km').mean().reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: moi,
+  scale: 1000,
+}).get('LST_Day_1km'));
+print(Ts_cold);
+
+var c = Ts_cold.divide(Ta_max);
+//print('c:',c);
+
+var Tc = c.multiply(Ta_max);
+print('Tc:',Tc);
+
+//Ts
+var Ts = ee.Number(combined.select('LST_Day_1km').mean().reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: moi,
+  scale: 1000,
+}).get('LST_Day_1km'));
+
+// --------------------------------- Calculation of dT -------------------------
+//dT = Rn * rah / pa * Cp
+//Rn = Rns - Rnl
+//Rns = (1-alpha)Rs
+//Rs = (0.75 + 2*10^-5 * z)Ra
+//Ra = 24*60/pi Gsc dr [ws sin(lat_rad) sin(sun declineation angle) + cos(lat_rad) cos(sun_declineation angle) sin(ws)]
+
+//doy
+var dataset_ = combined.select('LST_Day_1km').filterDate(Daterange);
+var imageList = dataset_.toList(dataset_.size());
+print("Imagecollection",imageList.length().getInfo());
+// Loop through the list and print the system:time_start property
+for (var i = 0; i < imageList.length().getInfo(); i++) {
+  var image = ee.Image(imageList.get(i));
+  var startTime = ee.Date(image.get('system:time_start'));
+  var date = ee.Date(image.get('system:time_start')).format('YYYY-MM-dd');
+  var doy = startTime.getRelative('day','year'); 
+  print('Image', i, 'doy:', doy,'date:',date);
+
+
+
+//Solar Declineation Angle
+//ee.Number(0.409).multiply(
+var solar_decl_ang = ee.Number(0.409).multiply(ee.Number(2*Math.PI/365)
+                    .multiply(ee.Number(doy)).subtract(1.39).sin());
+//print('Solar Declineation Angle:',solar_decl_ang);
+
+//Inverse distance between sun earth
+//dr = 1+ 0.033 * cos(2*pi/365 * J)
+var In_sun_earth_dis = ee.Number(1).add(ee.Number(0.033).multiply(ee.Number(2 * 3.14 / 365).multiply(ee.Number(doy)).cos()));
+//print('Distance between Earth and Sun:',In_sun_earth_dis);
+
+//Sunset hour
+var lat = moi.centroid().coordinates().get(1);
+//print('Latitude:',lat);
+
+//Latitude in Radian
+var lat_rad = ee.Number(lat).multiply(ee.Number(Math.PI)).divide(180);
+//print('Latitude in Rad:',lat_rad);
+
+//ws = arccos[- tan(latitude in rad)tan(solar declination angle)]
+var sunset_hr = lat_rad.tan().multiply(solar_decl_ang.tan()).acos();
+//print('Sunset Hour:',sunset_hr);
+
+//Extra-terrestial Radiation
+//Ra = 24*60/pi Gsc dr[ws sin(lat rad)sin(solar angle) + cos(lat rad)cos(solar angle) sin(ws)]
+var Gsc = ee.Number(0.0820);
+//print('Gsc:',Gsc);
+var sinSolarangle = solar_decl_ang.sin();
+//print('sinSolarangle:',sinSolarangle);
+var sinLatrad = lat_rad.sin();
+//print('sinLatrad:',sinLatrad);
+var cosSolarangle = solar_decl_ang.cos();
+//print('cosSolarangle:',cosSolarangle);
+var cosLatrad = lat_rad.cos();
+//print('cosLatrad:',cosLatrad);
+var sinSunsetHour = sunset_hr.sin();
+//print('sinSunsetHour:',sinSunsetHour);
+
+var Ra = ee.Number(24*60/Math.PI).multiply(Gsc)
+        .multiply(In_sun_earth_dis)
+        .multiply(sunset_hr.multiply(sinLatrad).multiply(sinSolarangle)
+        .add(cosLatrad.multiply(cosSolarangle).multiply(sinSunsetHour)));
+//print('Ra:',Ra);
+
+
+var product_z = ee.Number(2e-5).multiply(DEM);
+//print('z:',product_z);
+var Rs = ee.Number(0.75).add(product_z).multiply(Ra);
+//print('Rs',Rs);
+
+//Rns
+var Rns = ee.Number(1-0.23).multiply(Rs);
+//print('Rns:',Rns);
+
+//dew_temp_min
+var dewTemperature_min = dew_Temp_min.select('dewpoint_temperature_2m_min')
+                        .filterDate(Daterange).mean();
+var Tdew = ee.Number(dewTemperature_min.reduceRegion({
+  reducer:ee.Reducer.min(),
+  geometry:moi,
+  scale:1000,
+}).get('dewpoint_temperature_2m_min')).subtract(273.15);
+//print('Tdew in c',Tdew);
+
+// //e^o(Tmin)
+var ea = ee.Number(0.6108).multiply(ee.Number(17.27)
+        .multiply(Tdew).divide(Tdew.add(237.3)).exp());
+//print('ea',ea);
+
+var Temperature_max = Air_Temp_max.select('maximum_2m_air_temperature')
+                        .filterDate(Daterange).mean();
+var T_max = ee.Number(Temperature_max.select('maximum_2m_air_temperature').reduceRegion({
+  reducer: ee.Reducer.max(),
+  geometry: moi,
+  scale: 1000,
+}).get('maximum_2m_air_temperature'))
+
+var Temperature_max = Air_Temp_min.select('minimum_2m_air_temperature')
+                        .filterDate(Daterange).mean();
+var T_min = ee.Number(Temperature_max.select('minimum_2m_air_temperature').reduceRegion({
+  reducer: ee.Reducer.min(),
+  geometry: moi,
+  scale: 1000,
+}).get('minimum_2m_air_temperature'))
+
+//Net Longwave Radiation
+var stefan_ = ee.Number(4.903e-9);
+var sqrt_ea = ee.Number(0.14).multiply((ea).sqrt());
+print(' sqrt ea:',sqrt_ea);
+var Rnl = stefan_.multiply(T_max.pow(4).add(T_min.pow(4)).divide(2))
+              .multiply(ee.Number(0.34).subtract(sqrt_ea))
+              .multiply(ee.Number(1.35 * 1 - 0.35));
+// var stefan = (Tmax.pow(4).add(Tmin.pow(4))).divide(2);
+// var boltzman = stefan.multiply(stefan_);
+// print("Rnl part:",boltzman);
+// print("Rnl part:",stefan);
+//print('Rnl:',Rnl);
+
+
+//Rn = Rns - Rnl
+var Rn = Rns.subtract(Rnl);
+var Rn_day = Rn.multiply(0.408);//per day is 0.408
+//print('Rns:',Rns);
+print('Rn:',Rn);
+//print('Rn_day:',Rn_day);
+
+//dT = Rn * rah / pa * Cp
+var rah = ee.Number(110);
+var Cp = ee.Number(1.013);
+var dem_data = ee.Number(0.0065).multiply(DEM);
+var add_sea_level = ee.Number(293);
+var pow = ee.Number(5.26);
+var P = ee.Number(101.3).multiply(add_sea_level.subtract(dem_data)
+        .divide(add_sea_level).pow(pow));
+
+
+var Temperature_mean = Air_Temp_mean.select('mean_2m_air_temperature')
+                        .filterDate(Daterange).mean();
+var Ta_mean = ee.Number(Temperature_mean.select('mean_2m_air_temperature')
+              .reduceRegion({
+                reducer: ee.Reducer.mean(),
+                geometry: moi,
+                scale:1000,
+              }).get('mean_2m_air_temperature'));
+
+
+var Tkv = ee.Number(1.01).multiply(Ta_mean);
+//print('Tkv:',Tkv);
+//print('P',P);
+var pa = ee.Number(3.486).multiply(P.divide(Tkv));
+//print('Air Density pa:',pa);
+//Get the dT value
+var dT = Rn_day.multiply(rah).divide(pa.multiply(Cp));
+print('dT:',dT);
+
+//Th
+var Th = Tc.add(dT);
+//print('Hot Boundary:',Th);
+
+//Ts
+//var surf_Temp = image.select('LST_Day_1km').filterDate(Daterange).mean();
+
+//ETf
+var ETf = Th.subtract(Ts).divide(Th.subtract(Tc));
+print('ET Fraction:',ETf);
+
+
+
+// --------------------- Estimation of ETo Penmann Moneith ------------------
+// ---- find the FAO ETo -----
+//Load the Tmax and Tmin
+var T_max_c = T_max.subtract(273.15);
+var T_min_c = T_min.subtract(273.15);
+var T_max_ETo = ee.Number(0.6108).multiply(ee.Number(17.27)
+        .multiply(T_max_c).divide(T_max_c.add(237.3)).exp());
+var T_min_ETo = ee.Number(0.6108).multiply(ee.Number(17.27)
+        .multiply(T_min_c).divide(T_min_c.add(237.3)).exp());
+
+//----- Saturation Vapor Pressure es -----
+var es = T_max_ETo.add(T_min_ETo).divide(2);
+
+//slope of saturation vapour pressure (Δ)
+var T_mean_c = Ta_mean.subtract(273.15);
+//print('T_mean_c',T_mean_c);
+//print('T_min_c',T_min_c);
+//print('T_max_c',T_max_c);
+var Slope_saturation_vp = ee.Number(4096)
+            .multiply(ee.Number(0.6108)
+            .multiply(ee.Number(17.27).multiply(T_mean_c).divide(T_mean_c.add(237.3)).exp()))
+            .divide(T_mean_c.add(237.3).pow(2));
+
+//print('Slope Saturation:',Slope_saturation_vp);
+
+// ---- Slope psychrometric constant 0.665*10^-3 P ----
+var P = ee.Number(101.3).multiply(ee.Number(293)
+        .subtract(ee.Number(0.0065).multiply(DEM)).divide(293).pow(5.26));
+
+var psychromatic_constant = ee.Number(0.000665).multiply(P);
+
+//print('Psychromatic Constant:',psychromatic_constant);
+
+
+
+// -----Wind speed u2 -----
+var dataset_Uz = ERA5.filterDate(Daterange)
+        .filterBounds(moi)
+        .select('u_component_of_wind_10m')
+        .mean();
+
+
+var ERA51000 = dataset_Uz.resample('bicubic').reproject({
+  crs: Projection,
+  scale: Scale,
+});
+
+var Uz = ee.Number(ERA51000.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: moi,
+  scale: 1000,
+}).get('u_component_of_wind_10m'));
+
+//print('Wind speed:',Uz);
+
+var u2 = Uz.multiply(ee.Number(4.87)
+        .divide(ee.Number(67.8).multiply(ee.Number(10)).subtract(5.42).log()));
+
+//print('Wind speed 2m U Compoenet:',u2);
+
+//V component
+var dataset_Vz = ERA5.filterDate(Daterange)
+        .filterBounds(moi)
+        .select('v_component_of_wind_10m')
+        .mean();
+
+
+var ERA51000 = dataset_Vz.resample('bicubic').reproject({
+  crs: Projection,
+  scale: Scale,
+});
+
+var Vz = ee.Number(ERA51000.reduceRegion({
+  reducer: ee.Reducer.mean(),
+  geometry: moi,
+  scale: 1000,
+}).get('v_component_of_wind_10m'));
+
+//print('Wind speed:',Vz);
+
+var v2 = Vz.multiply(ee.Number(4.87)
+        .divide(ee.Number(67.8).multiply(ee.Number(10)).subtract(5.42).log()));
+
+//print('Wind speed 2m V component:',v2);
+
+//Wind speed sqrt(u^2 + v^2)
+var windspeed = u2.pow(2).add(v2.pow(2)).sqrt();
+//print("wind speed",windspeed);
+var ETo = ee.Image().expression(
+  '(0.408 * slope * Rn + psycho * (900/T+273) * u2 * (es-ea))/ ( slope + psycho * (1+ 0.34 * u2))',
+  {
+    slope: Slope_saturation_vp,
+    Rn: ee.Number(438875.25),
+    psycho: psychromatic_constant,
+    T: Ta_mean,
+    u2: windspeed,
+    es: es,
+    ea:ea,
+  }
+  
+);
+//ee.Number(0.408).multiply(
+
+
+var Eto =  ee.Number(0.408).multiply(Slope_saturation_vp)
+          .multiply(Rn).add(psychromatic_constant
+          .multiply(ee.Number(900).divide(Ta_mean)
+          .multiply(windspeed.multiply(es.subtract(ea)))))
+          .divide(Slope_saturation_vp.add(psychromatic_constant.multiply(ee.Number(1).add(ee.Number(0.34)
+          .multiply(windspeed)))));
+print('ETo:',Eto);
+
+//PET
+var PET = ee.Number(1.2).multiply(Eto);
+print('PET:',PET);
+
+//aET mm/day
+var aET = ETf.multiply(Eto);
+var ET = ETf.multiply(PET);
+//print('Actual ETmm/day',aET);
+print('ET mm/day:',ET);
+
+
+
+var feature = ee.Feature(null,{
+    'Date':date,
+    'ETa':aET,
+    'aET':ET,
+    'lat':moi.centroid().coordinates().get(0),
+    'lon':moi.centroid().coordinates().get(1),
+  });
+  
+etList.push(feature);
+}
+var ET_Feature = ee.FeatureCollection(etList)
+print('ETo List:',ET_Feature.size());
+//print('ETo List:',etList[0]);
+
+
+
+Export.table.toDrive({
+  collection:ET_Feature,
+  description: 'ET_Values',
+  folder: 'Google Earth',
+  fileFormat: 'CSV'
+});
