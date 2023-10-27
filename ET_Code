@@ -1,4 +1,20 @@
-//Aear of Interest
+//Datasets
+var Boundaries = ee.FeatureCollection("USDOS/LSIB_SIMPLE/2017"),
+    MODIS_ET = ee.ImageCollection("MODIS/NTSG/MOD16A2/105"),
+    NDVI = ee.ImageCollection("MODIS/061/MOD13A2"),
+    LST = ee.ImageCollection("MODIS/061/MOD11A2"),
+    ERA_5 = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR"),
+    ERA5 = ee.ImageCollection("ECMWF/ERA5/DAILY"),
+    SRTM = ee.Image("CGIAR/SRTM90_V4"),
+    imageVisParam2 = {"opacity":1,"bands":["NDVI"],"min":-1,"palette":["efff68","4eff39"]},
+    WAPOR_RET = ee.ImageCollection("FAO/WAPOR/2/L1_RET_D"),
+    table = ee.FeatureCollection("users/geoinformatics696/watershed_chhattisgarh"),
+    MODIS_surf = ee.ImageCollection("MODIS/061/MOD09Q1"),
+    ndvipara = {"opacity":1,"bands":["NDVI"],"min":-1,"max":1,"palette":["90ff7c","5a67ff"]},
+    geometry = /* color: #98ff00 */ee.Geometry.Point([80.13162361914553, 19.096152203946563]);
+
+//----------------------------------------------------- Estimstion of ET on GEE using SSEBop Model ------------------------------------------------------------------------------
+//Area of Interest
 var boundary = Boundaries.filter(ee.Filter.eq('country_co','CG'));
 var moi = boundary.geometry();//geometry;//table.geometry();
 Map.centerObject(boundary,5);
